@@ -222,7 +222,8 @@ trait HasFillableRelations
         $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
         $attributes[$relation->getMorphType()] = $relation->getMorphClass();
 
-        $relation->getRelated()->newInstance($attributes);
+        $relation->getRelated()->newInstance($attributes)->save();
+
     }
 
     /**
