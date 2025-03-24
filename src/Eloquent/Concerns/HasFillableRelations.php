@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 use ReflectionObject;
@@ -108,13 +109,21 @@ trait HasFillableRelations
      */
     public function fillBelongsToRelation(BelongsTo $relation, $attributes, $relationName)
     {
-        $entity = $attributes;
         if (!$attributes instanceof Model) {
-            $entity = $relation->getRelated()
-                ->where($attributes)->firstOrFail();
+            $related = $relation->getRelated();
+            if(array_key_exists($related->getKeyName(), $attributes)){
+                $relatedInstance = $related->find($attributes[$related->getKeyName()]);
+                if($relatedInstance){
+                    $relatedInstance = $related->update($attributes);
+                }
+            }else{
+                $relatedInstance = $relation->getRelated()->create($attributes);
+            }
+        }else{
+            $relatedInstance = $attributes;
+            $relatedInstance->save();
         }
-
-        $relation->associate($entity);
+        $relation->associate($relatedInstance);
     }
 
     /**
@@ -123,13 +132,26 @@ trait HasFillableRelations
      */
     public function fillHasOneRelation(HasOne $relation, $attributes, $relationName)
     {
-        $this->fillHasOneOrManyRelation($relation, [$attributes], $relationName);
+        if (!$this->exists) {
+            $this->save();
+            $relation = $this->{Str::camel($relationName)}();
+        }
+
+        $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
+        $relatedInstance = $relation->getResults();
+        if($relatedInstance?->exists){
+            $relatedInstance->update($attributes);
+        }else{
+            $relation->getRelated()->newInstance($attributes)->save();
+        }
     }
 
     /**
      * @param HasMany $relation
      * @param array $attributes
      */
+
+    #TODO: fix if required
     public function fillHasManyRelation(HasMany $relation, array $attributes, $relationName)
     {
         $this->fillHasOneOrManyRelation($relation, $attributes, $relationName);
@@ -139,14 +161,14 @@ trait HasFillableRelations
      * @param HasOneOrMany $relation
      * @param array $attributes
      */
+
+    #TODO: fix if required
     private function fillHasOneOrManyRelation($relation, array $attributes, $relationName)
     {
         if (!$this->exists) {
             $this->save();
             $relation = $this->{Str::camel($relationName)}();
         }
-
-        $relation->delete();
 
         foreach ($attributes as $related) {
             if (!$related instanceof Model) {
@@ -156,10 +178,9 @@ trait HasFillableRelations
                 } else {  // Laravel 5.5+
                     $related[$relation->getForeignKeyName()] = $relation->getParentKey();
                 }
-                $related = $relation->getRelated()->newInstance($related);
+                $related = $relation->getRelated();
                 $related->exists = $related->wasRecentlyCreated;
             }
-
             $relation->save($related);
         }
     }
@@ -168,6 +189,7 @@ trait HasFillableRelations
      * @param BelongsToMany $relation
      * @param array $attributes
      */
+    #TODO: fix if required
     public function fillBelongsToManyRelation(BelongsToMany $relation, array $attributes, $relationName)
     {
         if (!$this->exists) {
@@ -197,13 +219,19 @@ trait HasFillableRelations
      */
     public function fillMorphToRelation(MorphTo $relation, $attributes, $relationName)
     {
-        $entity = $attributes;
-
-        if (! $entity instanceof Model) {
-            $entity = $relation->getRelated()->firstOrCreate($entity);
+        $relatedInstance = $relation->getResults();
+        if($relatedInstance?->exists){
+            $relatedInstance->update($attributes);
+        }else{
+            $related = $relation->getRelated();
+            if(array_key_exists($related->getKeyName(), $$attributes)){
+                $relatedInstance = $related->find($attributes[$related->getKeyName()]);
+                $relatedInstance->update($attributes);
+            }else{
+                $relatedInstance = $relation->getRelated()->newInstance($attributes)->save();
+            }
         }
-
-        $relation->associate($entity);
+        $relation->associate($relatedInstance);
     }
 
     /**
@@ -217,19 +245,21 @@ trait HasFillableRelations
             $relation = $this->{Str::camel($relationName)}();
         }
 
-        $relation->delete();
-
         $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
         $attributes[$relation->getMorphType()] = $relation->getMorphClass();
-
-        $relation->getRelated()->newInstance($attributes)->save();
-
+        $relatedInstance = $relation->getResults();
+        if($relatedInstance?->exists){
+            $relatedInstance->update($attributes);
+        }else{
+            $relation->getRelated()->newInstance($attributes)->save();
+        }
     }
 
     /**
      * @param HasMany $relation
      * @param array $attributes
      */
+    #TODO: fix if required
     public function fillMorphManyRelation(MorphMany $relation, array $attributes, $relationName)
     {
         if (!$this->exists) {
