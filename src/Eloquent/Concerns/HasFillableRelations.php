@@ -152,36 +152,44 @@ trait HasFillableRelations
      */
 
     #TODO: fix if required
-    public function fillHasManyRelation(HasMany $relation, array $attributes, $relationName)
-    {
-        $this->fillHasOneOrManyRelation($relation, $attributes, $relationName);
-    }
-
-    /**
-     * @param HasOneOrMany $relation
-     * @param array $attributes
-     */
-
-    #TODO: fix if required
-    private function fillHasOneOrManyRelation($relation, array $attributes, $relationName)
+    public function fillHasManyRelation(HasMany $relation, array $attributesList, $relationName)
     {
         if (!$this->exists) {
             $this->save();
             $relation = $this->{Str::camel($relationName)}();
         }
+        $shouldDelete = true;
+        $related = $relation->getRelated();
+        foreach($attributesList as $attributes){
+            if(array_key_exists($related->getKeyname(), $attributes)){
+                $shouldDelete = false;
+                break;
+            }
+        }
+        if($shouldDelete){
+            $relation->delete();
+        }
 
-        foreach ($attributes as $related) {
-            if (!$related instanceof Model) {
+        foreach ($attributesList as $attributes) {
+            if (!$attributes instanceof Model) {
                 if (method_exists($relation, 'getHasCompareKey')) { // Laravel 5.3
                     $foreign_key = explode('.', $relation->getHasCompareKey());
-                    $related[$foreign_key[1]] = $relation->getParent()->getKey();
+                    $attributes[$foreign_key[1]] = $relation->getParent()->getKey();
                 } else {  // Laravel 5.5+
-                    $related[$relation->getForeignKeyName()] = $relation->getParentKey();
+                    $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
                 }
                 $related = $relation->getRelated();
-                $related->exists = $related->wasRecentlyCreated;
+                if(array_key_exists($related->getKeyname(), $attributes)){
+                    $relatedInstance = $related->find($attributes[$related->getKeyName()]);
+                    $relatedInstance->update($attributes);
+                }else{
+                    $relatedInstance = $related->create($attributes);
+                }
+            }else{
+                $relatedInstance = $attributes;
+                $relatedInstance->save();
             }
-            $relation->save($related);
+            $relation->save($relatedInstance);
         }
     }
 
@@ -260,28 +268,43 @@ trait HasFillableRelations
      * @param array $attributes
      */
     #TODO: fix if required
-    public function fillMorphManyRelation(MorphMany $relation, array $attributes, $relationName)
+    public function fillMorphManyRelation(MorphMany $relation, array $attributesList, $relationName)
     {
         if (!$this->exists) {
             $this->save();
             $relation = $this->{Str::camel($relationName)}();
         }
+        $related = $relation->getRelated();
+        $shouldDelete = true;
+        foreach($attributesList as $attributes){
+            if(array_key_exists($related->getKeyname(), $attributes)){
+                $shouldDelete = false;
+                break;
+            }
+        }
+        if($shouldDelete){
+            $relation->delete();
+        }
 
-        $relation->delete();
-
-        foreach ($attributes as $related) {
-            if (!$related instanceof Model) {
+        foreach ($attributesList as $attributes) {
+            if (!$attributes instanceof Model) {
                 if (method_exists($relation, 'getHasCompareKey')) { // Laravel 5.3
                     $foreign_key = explode('.', $relation->getHasCompareKey());
-                    $related[$foreign_key[1]] = $relation->getParent()->getKey();
+                    $attributes[$foreign_key[1]] = $relation->getParent()->getKey();
                 } else {  // Laravel 5.5+
-                    $related[$relation->getForeignKeyName()] = $relation->getParentKey();
+                    $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
                 }
-                $related = $relation->getRelated()->newInstance($related);
-                $related->exists = $related->wasRecentlyCreated;
+                if(array_key_exists($related->getKeyname(), $attributes)){
+                    $relatedInstance = $related->find($attributes[$related->getKeyName()]);
+                    $relatedInstance->update($attributes);
+                }else{
+                    $relatedInstance = $related->create($attributes);
+                }
+            }else{
+                $relatedInstance = $attributes;
+                $relatedInstance->save();
             }
-
-            $relation->save($related);
+            $relation->save($relatedInstance);
         }
     }
 }
