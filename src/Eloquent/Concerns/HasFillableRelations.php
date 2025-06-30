@@ -3,18 +3,18 @@
 namespace LaravelFillableRelations\Eloquent\Concerns;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
-use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use RuntimeException;
 use ReflectionObject;
+use RuntimeException;
 
 /**
  * Mix this in to your model class to enable fillable relations.
@@ -69,6 +69,7 @@ trait HasFillableRelations
 
     public function fillRelations(array $relations)
     {
+        Log::info("Filling relations...$relations");
         foreach ($relations as $relationName => $attributes) {
             $relation = $this->{Str::camel($relationName)}();
 
