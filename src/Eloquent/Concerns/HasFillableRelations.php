@@ -11,7 +11,6 @@ use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use ReflectionObject;
 use RuntimeException;
@@ -129,6 +128,9 @@ trait HasFillableRelations
     /**
      * @param HasOne $relation
      * @param array|Model $attributes
+     *
+     * Atomic版: 既存レコード更新時にロックを取得
+     * 注意: 呼び出し元でDB::transaction()を使用すること
      */
     public function fillHasOneRelation(HasOne $relation, $attributes, $relationName)
     {
@@ -138,10 +140,11 @@ trait HasFillableRelations
         }
 
         $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
-        $relatedInstance = $relation->getResults();
-        if($relatedInstance?->exists){
+        // ロック付きで既存レコードを取得（race condition防止）
+        $relatedInstance = $relation->lockForUpdate()->first();
+        if ($relatedInstance?->exists) {
             $relatedInstance->update($attributes);
-        }else{
+        } else {
             $relation->getRelated()->newInstance($attributes)->save();
         }
     }
@@ -149,26 +152,20 @@ trait HasFillableRelations
     /**
      * @param HasMany $relation
      * @param array $attributes
+     *
+     * Atomic版: 全削除→再作成パターンを廃止し、安全なupsert/delete方式に変更
+     * 注意: 呼び出し元でDB::transaction()を使用すること
      */
-
-    #TODO: fix if required
     public function fillHasManyRelation(HasMany $relation, array $attributesList, $relationName)
     {
         if (!$this->exists) {
             $this->save();
             $relation = $this->{Str::camel($relationName)}();
         }
-        $shouldDelete = true;
+
         $related = $relation->getRelated();
-        foreach($attributesList as $attributes){
-            if(array_key_exists($related->getKeyname(), $attributes)){
-                $shouldDelete = false;
-                break;
-            }
-        }
-        if($shouldDelete){
-            $relation->delete();
-        }
+        $primaryKey = $related->getKeyName();
+        $existingIds = [];
 
         foreach ($attributesList as $attributes) {
             if (!$attributes instanceof Model) {
@@ -178,19 +175,32 @@ trait HasFillableRelations
                 } else {  // Laravel 5.5+
                     $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
                 }
-                $related = $relation->getRelated();
-                if(array_key_exists($related->getKeyname(), $attributes)){
-                    $relatedInstance = $related->find($attributes[$related->getKeyName()]);
-                    $relatedInstance->update($attributes);
-                }else{
+
+                if (array_key_exists($primaryKey, $attributes)) {
+                    // 既存レコードをロック付きで更新（race condition防止）
+                    if (method_exists($related, 'findForUpdate')) {
+                        $relatedInstance = $related::findForUpdate($attributes[$primaryKey]);
+                    } else {
+                        $relatedInstance = $related::lockForUpdate()->find($attributes[$primaryKey]);
+                    }
+                    if ($relatedInstance) {
+                        $relatedInstance->update($attributes);
+                        $existingIds[] = $attributes[$primaryKey];
+                    }
+                } else {
+                    // 新規レコードを作成
                     $relatedInstance = $related->create($attributes);
+                    $existingIds[] = $relatedInstance->$primaryKey;
                 }
-            }else{
+            } else {
                 $relatedInstance = $attributes;
                 $relatedInstance->save();
+                $existingIds[] = $relatedInstance->$primaryKey;
             }
-            $relation->save($relatedInstance);
         }
+
+        // 更新/作成されなかったレコードのみを削除（安全な差分削除）
+        $relation->whereNotIn($primaryKey, $existingIds)->delete();
     }
 
     /**
@@ -232,7 +242,7 @@ trait HasFillableRelations
             $relatedInstance->update($attributes);
         }else{
             $related = $relation->getRelated();
-            if(array_key_exists($related->getKeyName(), $$attributes)){
+            if(array_key_exists($related->getKeyName(), $attributes)){
                 $relatedInstance = $related->find($attributes[$related->getKeyName()]);
                 $relatedInstance->update($attributes);
             }else{
@@ -245,6 +255,9 @@ trait HasFillableRelations
     /**
      * @param MorphOne $relation
      * @param array|Model $attributes
+     *
+     * Atomic版: 既存レコード更新時にロックを取得
+     * 注意: 呼び出し元でDB::transaction()を使用すること
      */
     public function fillMorphOneRelation(MorphOne $relation, $attributes, $relationName)
     {
@@ -255,36 +268,32 @@ trait HasFillableRelations
 
         $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
         $attributes[$relation->getMorphType()] = $relation->getMorphClass();
-        $relatedInstance = $relation->getResults();
-        if($relatedInstance?->exists){
+        // ロック付きで既存レコードを取得（race condition防止）
+        $relatedInstance = $relation->lockForUpdate()->first();
+        if ($relatedInstance?->exists) {
             $relatedInstance->update($attributes);
-        }else{
+        } else {
             $relation->getRelated()->newInstance($attributes)->save();
         }
     }
 
     /**
-     * @param HasMany $relation
+     * @param MorphMany $relation
      * @param array $attributes
+     *
+     * Atomic版: 全削除→再作成パターンを廃止し、安全なupsert/delete方式に変更
+     * 注意: 呼び出し元でDB::transaction()を使用すること
      */
-    #TODO: fix if required
     public function fillMorphManyRelation(MorphMany $relation, array $attributesList, $relationName)
     {
         if (!$this->exists) {
             $this->save();
             $relation = $this->{Str::camel($relationName)}();
         }
+
         $related = $relation->getRelated();
-        $shouldDelete = true;
-        foreach($attributesList as $attributes){
-            if(array_key_exists($related->getKeyname(), $attributes)){
-                $shouldDelete = false;
-                break;
-            }
-        }
-        if($shouldDelete){
-            $relation->delete();
-        }
+        $primaryKey = $related->getKeyName();
+        $existingIds = [];
 
         foreach ($attributesList as $attributes) {
             if (!$attributes instanceof Model) {
@@ -294,17 +303,32 @@ trait HasFillableRelations
                 } else {  // Laravel 5.5+
                     $attributes[$relation->getForeignKeyName()] = $relation->getParentKey();
                 }
-                if(array_key_exists($related->getKeyname(), $attributes)){
-                    $relatedInstance = $related->find($attributes[$related->getKeyName()]);
-                    $relatedInstance->update($attributes);
-                }else{
+                $attributes[$relation->getMorphType()] = $relation->getMorphClass();
+
+                if (array_key_exists($primaryKey, $attributes)) {
+                    // 既存レコードをロック付きで更新（race condition防止）
+                    if (method_exists($related, 'findForUpdate')) {
+                        $relatedInstance = $related::findForUpdate($attributes[$primaryKey]);
+                    } else {
+                        $relatedInstance = $related::lockForUpdate()->find($attributes[$primaryKey]);
+                    }
+                    if ($relatedInstance) {
+                        $relatedInstance->update($attributes);
+                        $existingIds[] = $attributes[$primaryKey];
+                    }
+                } else {
+                    // 新規レコードを作成
                     $relatedInstance = $related->create($attributes);
+                    $existingIds[] = $relatedInstance->$primaryKey;
                 }
-            }else{
+            } else {
                 $relatedInstance = $attributes;
                 $relatedInstance->save();
+                $existingIds[] = $relatedInstance->$primaryKey;
             }
-            $relation->save($relatedInstance);
         }
+
+        // 更新/作成されなかったレコードのみを削除（安全な差分削除）
+        $relation->whereNotIn($primaryKey, $existingIds)->delete();
     }
 }
